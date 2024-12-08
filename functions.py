@@ -4,7 +4,7 @@ import numpy as np
 
 
 @nb.njit()
-def new_values(x, y, alpha, wL, wR, dt, D, K):
+def update_robot_position(x, y, alpha, wL, wR, dt, D, K):
     if abs(wL - wR) < 10e-10:
         new_alpha = alpha
         new_x = x + dt * (wL * D / 2) * math.cos(alpha)
@@ -91,3 +91,19 @@ def find_nearest_intersection_jit(angle, start_x, start_y, segments):
                     min_distance = distance
                     nearest_intersection = np.array([intersection_x, intersection_y])
     return nearest_intersection
+
+
+def check_warning_points(point, warning_points, radius, cell_size):
+    row = int(point[0] // cell_size)
+    col = int(point[1] // cell_size)
+    warning_points_copy = warning_points.copy()
+    warning_points_copy[row, col, :, 0:2] -= point
+    warning_points_copy[row, col, :, 0:2] **= 2
+    warning_points_copy[row, col, :, 0] = np.sqrt(
+        warning_points_copy[row, col, :, 0] + warning_points_copy[row, col, :, 1]
+    )
+    is_in_area = any(
+        (warning_points_copy[row, col, :, 0] < radius)
+        & (warning_points_copy[row, col, :, 2] > 0.0)
+    )
+    return is_in_area
