@@ -9,15 +9,18 @@ from functions import (
     update_robot_position_jit,
     find_nearest_intersection,
     find_nearest_intersection_jit,
-    check_warning_points,
-    check_warning_points_jit,
+    check_area_points,
+    check_area_points_jit,
 )
 
 # CONSTANTS
-NUM_LIDAR_RAYS = 20
+NUM_LIDAR_RAYS = 10
 H = 0.05
 LIDAR_ROTATION_TIME = 2.6527945914557116e-5  # one radian
 LIDAR_TIME = 6.7e-8
+CLEAN_RADIUS_FACTOR = 1.4
+WARNING_RADIUS_FACTOR = 1.2
+NUM_CLEAN_WAIT = 100
 
 # INPUT
 print("All data is measured in meters (or radians)!!!")
@@ -89,26 +92,76 @@ for i, obstacle in enumerate(obstacle_vertices):
         )
         segment_index += 1
 
-warning_points_data = np.zeros(
-    (num_rows, num_cols, 1000, 3), dtype=float
-)  # *BRAIN* OF ROBOT
-available_ids = [[set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)]
-pending_draw = deque()
+warning_points_data = np.zeros((num_rows + 1, num_cols + 1, 1000, 3), dtype=float)
+clear_points_data = np.zeros((num_rows + 1, num_cols + 1, 1000, 3), dtype=float)
+real_points_data = np.zeros((num_rows + 1, num_cols + 1, 1000, 3), dtype=float)
+available_ids_warning_points = [
+    [set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)
+]
+available_ids_clear_points = [
+    [set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)
+]
+available_ids_real_points = [
+    [set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)
+]
+clean_queue = deque()
+pending_draw_warning_points = deque()
+pending_draw_clear_points = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * NUM_LIDAR_RAYS
-moving_full_time = 1e10 - 3
+moving_full_time = 1e-3
 lidar_rays = []
 
 
-def add_point_to_data(point):
+def add_point_to_warning_points(point):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
-    if len(available_ids[row][col]) == 0:
+    if len(available_ids_warning_points[row][col]) == 0:
         print("WARN: No available IDs")
         return
-    id_ = available_ids[row][col].pop()
+    id_ = available_ids_warning_points[row][col].pop()
     warning_points_data[row, col, id_, :2] = point
     warning_points_data[row, col, id_, 2] = 1
-    pending_draw.append(point)
+    pending_draw_warning_points.append(point)
+
+
+def add_point_to_clear_points(point):
+    clean_queue.append(point)
+    if len(clean_queue) >= NUM_CLEAN_WAIT:
+        point = clean_queue.popleft()
+        row = int(point[0] // cell_size)
+        col = int(point[1] // cell_size)
+        if len(available_ids_clear_points[row][col]) == 0:
+            print("WARN: No available IDs")
+            return
+        id_ = available_ids_clear_points[row][col].pop()
+        clear_points_data[row, col, id_, :2] = point
+        clear_points_data[row, col, id_, 2] = 1
+        pending_draw_clear_points.append(point)
+
+
+def add_point_to_real_points(point):
+    row = int(point[0] // cell_size)
+    col = int(point[1] // cell_size)
+    if len(available_ids_real_points[row][col]) == 0:
+        print("WARN: No available IDs")
+        return
+    id_ = available_ids_real_points[row][col].pop()
+    warning_points_data[row, col, id_, :2] = point
+    warning_points_data[row, col, id_, 2] = 1
+    pending_draw_warning_points.append(point)
+
+
+pattern1 = [
+    (50, 25),
+    (50, 50),
+    (10, 50),
+    (-50, 50),
+]
+pattern2 = [
+    (49, 50),
+    (50, 10),
+    (50, -50)
+]
 
 
 def simulation(delta_time):
@@ -134,18 +187,69 @@ def simulation(delta_time):
                     ]
                 )
             )
-            if not check_warning_points_jit(point, warning_points_data, H, cell_size):
-                add_point_to_data(point)
-    robot_x, robot_y, robot_orientation = update_robot_position_jit(
-        robot_x,
-        robot_y,
-        robot_orientation,
-        35,
-        50,
-        delta_time,
-        wheel_diameter,
-        wheel_distance / 2,
-    )
+            if not check_area_points_jit(point, warning_points_data, H, cell_size):
+                add_point_to_warning_points(point)
+    for wL, wR in pattern1:
+        x, y, orientation = update_robot_position_jit(
+            robot_x,
+            robot_y,
+            robot_orientation,
+            wL,
+            wR,
+            delta_time,
+            wheel_diameter,
+            wheel_distance / 2,
+        )
+        if not check_area_points_jit(
+            np.array([x, y]),
+            warning_points_data,
+            robot_radius * WARNING_RADIUS_FACTOR,
+            cell_size,
+        ):
+            if not check_area_points_jit(
+                np.array([x, y]),
+                clear_points_data,
+                robot_radius * CLEAN_RADIUS_FACTOR,
+                cell_size,
+            ):
+                robot_x, robot_y, robot_orientation = x, y, orientation
+                break
+    else:
+        for wL, wR in pattern2:
+            x, y, orientation = update_robot_position_jit(
+                robot_x,
+                robot_y,
+                robot_orientation,
+                wL,
+                wR,
+                delta_time,
+                wheel_diameter,
+                wheel_distance / 2,
+            )
+            if not check_area_points_jit(
+                np.array([x, y]),
+                warning_points_data,
+                robot_radius * WARNING_RADIUS_FACTOR,
+                cell_size,
+            ):
+                robot_x, robot_y, robot_orientation = x, y, orientation
+                break
+        else:
+            robot_x, robot_y, robot_orientation =update_robot_position_jit(
+                robot_x,
+                robot_y,
+                robot_orientation,
+                50,
+                -50,
+                delta_time,
+                wheel_diameter,
+                wheel_distance / 2,
+            )
+    point = np.array([robot_x, robot_y])
+    if not check_area_points_jit(
+        point, clear_points_data, H * CLEAN_RADIUS_FACTOR, cell_size
+    ):
+        add_point_to_clear_points(point)
 
 
 pygame.init()
@@ -158,6 +262,9 @@ obstacle_surface = pygame.surface.Surface(
 warning_points_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
+clear_point_surface = pygame.surface.Surface(
+    (K * room_width, K * room_height), pygame.SRCALPHA
+)
 
 for i in range(total_segments):
     pygame.draw.line(
@@ -166,21 +273,30 @@ for i in range(total_segments):
         obstacle_segments[i, 0, :] * K,
         obstacle_segments[i, 1, :] * K,
     )
-time.sleep(1)
 while True:
+
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             pygame.quit()
     lidar_rays = []
     simulation(1 / clock.get_fps() if clock.get_fps() != 0 else 0)
 
-    while len(pending_draw) != 0:
-        warning_point = pending_draw.pop()
+    while len(pending_draw_warning_points) != 0:
+        warning_point = pending_draw_warning_points.pop()
         pygame.draw.circle(
             warning_points_surface,
             (255, 0, 0, 128),
             warning_point * K,
-            robot_radius * K,
+            robot_radius * K * WARNING_RADIUS_FACTOR,
+        )
+
+    while len(pending_draw_clear_points) != 0:
+        clear_point = pending_draw_clear_points.pop()
+        pygame.draw.circle(
+            clear_point_surface,
+            (0, 0, 255, 128),
+            clear_point * K,
+            robot_radius * K * CLEAN_RADIUS_FACTOR,
         )
     main_surface = pygame.surface.Surface((K * room_width, K * room_height))
     main_surface.fill("white")
@@ -202,14 +318,13 @@ while True:
     warning_surface.blit(warning_points_surface, (0, 0))
     for line in lidar_rays:
         pygame.draw.line(warning_surface, "red", line[0] * K, line[1] * K, 1)
-    nearest_intersection = find_nearest_intersection_jit(
-        robot_orientation, robot_x, robot_y, obstacle_segments
-    )
-    if nearest_intersection is not None:
-        pygame.draw.circle(main_surface, "red", nearest_intersection * K, 5, 5)
+
+    clear_surface = main_surface.copy()
+    clear_surface.blit(clear_point_surface, (0, 0))
 
     screen.blit(main_surface, (0, 0))
     screen.blit(warning_surface, (K * room_width, 0))
+    screen.blit(clear_surface, (0, K * room_height))
     pygame.display.update()
     print(clock.get_fps())
-    clock.tick(int(1 / (lidar_full_time + moving_full_time)))
+    clock.tick(60)

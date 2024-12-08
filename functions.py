@@ -95,7 +95,7 @@ def find_nearest_intersection_jit(angle, start_x, start_y, segments):
     return nearest_intersection
 
 
-def check_warning_points(point, warning_points, radius, cell_size):
+def check_area_points(point, warning_points, radius, cell_size):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
     warning_points_copy = warning_points.copy()
@@ -112,22 +112,27 @@ def check_warning_points(point, warning_points, radius, cell_size):
 
 
 @nb.njit
-def check_warning_points_jit(point, warning_points, radius, cell_size):
+def check_area_points_jit(point, warning_points, radius, cell_size):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
-
-    warning_points_copy = warning_points[row, col, :, :].copy()
-
-    warning_points_copy[:, 0] -= point[0]
-    warning_points_copy[:, 1] -= point[1]
-
-    distances_squared = warning_points_copy[:, 0] ** 2 + warning_points_copy[:, 1] ** 2
-    distances = np.sqrt(distances_squared)
-
     is_in_area = False
-    for i in range(warning_points_copy.shape[0]):
-        if distances[i] < radius and warning_points_copy[i, 2] > 0.0:
-            is_in_area = True
-            break
+    for k in [-1, 0, 1]:
+        for j in [-1, 0, 1]:
+            warning_points_copy = warning_points[
+                max(0, row + k), max(0, col + j), :, :
+            ].copy()
+
+            warning_points_copy[:, 0] -= point[0]
+            warning_points_copy[:, 1] -= point[1]
+
+            distances_squared = (
+                warning_points_copy[:, 0] ** 2 + warning_points_copy[:, 1] ** 2
+            )
+            distances = np.sqrt(distances_squared)
+
+            for i in range(warning_points_copy.shape[0]):
+                if distances[i] < radius and warning_points_copy[i, 2] > 0.0:
+                    is_in_area = True
+                    break
 
     return is_in_area
