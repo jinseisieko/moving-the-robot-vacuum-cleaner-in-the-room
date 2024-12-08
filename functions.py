@@ -40,36 +40,53 @@ def find_nearest_intersection(angle, start_x, start_y, segments):
     is_t_in_range = (0 <= t) & (t <= 1)
     is_u_in_range = (0 <= u) & (u <= 1)
     intersection_points = segment_start_points + t[:, np.newaxis] * direction_segment
-    if len(intersection_points[is_t_in_range & is_u_in_range & non_zero_determinant]) == 0:
+    if (
+        len(intersection_points[is_t_in_range & is_u_in_range & non_zero_determinant])
+        == 0
+    ):
         return None
-    valid_intersections = intersection_points[is_t_in_range & is_u_in_range & non_zero_determinant].copy()
-    distances = np.linalg.norm(valid_intersections - np.array([start_x, start_y]), axis=1)
+    valid_intersections = intersection_points[
+        is_t_in_range & is_u_in_range & non_zero_determinant
+    ].copy()
+    distances = np.linalg.norm(
+        valid_intersections - np.array([start_x, start_y]), axis=1
+    )
     return valid_intersections[np.argmin(distances)]
-
 
 
 @nb.njit
 def find_nearest_intersection_jit(angle, start_x, start_y, segments):
     ray_end_x = math.cos(angle) * 10e7
     ray_end_y = math.sin(angle) * 10e7
-    ray_segment = np.array([[start_x, start_y], [ray_end_x, ray_end_y]], dtype=np.float64)
+    ray_segment = np.array(
+        [[start_x, start_y], [ray_end_x, ray_end_y]], dtype=np.float64
+    )
     num_segments = segments.shape[0]
     segment_start_points = segments[:, 0]
     segment_end_points = segments[:, 1]
     direction_segment = segment_end_points - segment_start_points
     direction_ray = ray_segment[1] - ray_segment[0]
-    min_distance = float('inf')
+    min_distance = float("inf")
     nearest_intersection = None
     for i in range(num_segments):
-        det = direction_segment[i, 0] * direction_ray[1] - direction_segment[i, 1] * direction_ray[0]
+        det = (
+            direction_segment[i, 0] * direction_ray[1]
+            - direction_segment[i, 1] * direction_ray[0]
+        )
         if det != 0:
             p = ray_segment[0] - segment_start_points[i]
             t = (p[0] * direction_ray[1] - p[1] * direction_ray[0]) / det
             u = (p[0] * direction_segment[i, 1] - p[1] * direction_segment[i, 0]) / det
             if 0 <= t <= 1 and 0 <= u <= 1:
-                intersection_x = segment_start_points[i, 0] + t * direction_segment[i, 0]
-                intersection_y = segment_start_points[i, 1] + t * direction_segment[i, 1]
-                distance = math.sqrt((intersection_x - start_x) ** 2 + (intersection_y - start_y) ** 2)
+                intersection_x = (
+                    segment_start_points[i, 0] + t * direction_segment[i, 0]
+                )
+                intersection_y = (
+                    segment_start_points[i, 1] + t * direction_segment[i, 1]
+                )
+                distance = math.sqrt(
+                    (intersection_x - start_x) ** 2 + (intersection_y - start_y) ** 2
+                )
                 if distance < min_distance:
                     min_distance = distance
                     nearest_intersection = np.array([intersection_x, intersection_y])

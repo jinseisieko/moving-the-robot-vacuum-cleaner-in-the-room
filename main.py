@@ -5,7 +5,12 @@ from pprint import pprint
 from collections import deque
 import numpy as np
 import pygame
-from functions import new_values, find_nearest_intersection, find_nearest_intersection_jit
+from functions import (
+    new_values,
+    find_nearest_intersection,
+    find_nearest_intersection_jit,
+)
+
 # CONSTS
 
 # INPUT
@@ -34,10 +39,30 @@ for i in range(N_obst):  # initial data entry
     for j in range(N_vert):
         obst_[-1].append(tuple(map(float, input("vertex x y:").split())))
 obstacles = np.zeros((N_segments, 2, 2), dtype=float)  # processed data
-obstacles[0, :, :] = np.array([[0, 0],[0, room_size_y],])
-obstacles[1, :, :] = np.array([[0, room_size_y],[room_size_x, room_size_y],])
-obstacles[2, :, :] = np.array([[room_size_x, room_size_y],[room_size_x, 0],])
-obstacles[3, :, :] = np.array([[room_size_x, 0],[0, 0],])
+obstacles[0, :, :] = np.array(
+    [
+        [0, 0],
+        [0, room_size_y],
+    ]
+)
+obstacles[1, :, :] = np.array(
+    [
+        [0, room_size_y],
+        [room_size_x, room_size_y],
+    ]
+)
+obstacles[2, :, :] = np.array(
+    [
+        [room_size_x, room_size_y],
+        [room_size_x, 0],
+    ]
+)
+obstacles[3, :, :] = np.array(
+    [
+        [room_size_x, 0],
+        [0, 0],
+    ]
+)
 h = 0
 for i, obs in enumerate(obst_):
     for j, point in enumerate(obs):
@@ -47,7 +72,7 @@ for i, obs in enumerate(obst_):
                 [obs[(j + 1) % len(obs)][0], obs[(j + 1) % len(obs)][1]],
             ]
         )
-        h+=1
+        h += 1
 data = np.zeros((rows, cols, 1000, 3), dtype=float)  # *BRAIN* OF ROBOT
 ids = [[set(range(1000)) for _ in range(cols)] for _ in range(rows)]
 wait_draw = deque()
