@@ -4,7 +4,7 @@ import numpy as np
 
 
 @nb.njit()
-def update_robot_position(x, y, alpha, wL, wR, dt, D, K):
+def update_robot_position_jit(x, y, alpha, wL, wR, dt, D, K):
     if abs(wL - wR) < 10e-10:
         new_alpha = alpha
         new_x = x + dt * (wL * D / 2) * math.cos(alpha)
@@ -21,8 +21,10 @@ def update_robot_position(x, y, alpha, wL, wR, dt, D, K):
 
 
 def find_nearest_intersection(angle, start_x, start_y, segments):
-    ray_end = np.array([math.cos(angle) * 10e7, math.sin(angle) * 10e7], dtype=float)
-    ray_segment = np.array([[start_x, start_y], ray_end], dtype=float)
+    ray_end = np.array(
+        [math.cos(angle) * 10e7, math.sin(angle) * 10e7], dtype=np.float64
+    )
+    ray_segment = np.array([[start_x, start_y], ray_end], dtype=np.float64)
     segments_copy = segments.copy()
     segment_start_points = segments_copy[:, 0]
     segment_end_points = segments_copy[:, 1]
@@ -106,4 +108,26 @@ def check_warning_points(point, warning_points, radius, cell_size):
         (warning_points_copy[row, col, :, 0] < radius)
         & (warning_points_copy[row, col, :, 2] > 0.0)
     )
+    return is_in_area
+
+
+@nb.njit
+def check_warning_points_jit(point, warning_points, radius, cell_size):
+    row = int(point[0] // cell_size)
+    col = int(point[1] // cell_size)
+
+    warning_points_copy = warning_points[row, col, :, :].copy()
+
+    warning_points_copy[:, 0] -= point[0]
+    warning_points_copy[:, 1] -= point[1]
+
+    distances_squared = warning_points_copy[:, 0] ** 2 + warning_points_copy[:, 1] ** 2
+    distances = np.sqrt(distances_squared)
+
+    is_in_area = False
+    for i in range(warning_points_copy.shape[0]):
+        if distances[i] < radius and warning_points_copy[i, 2] > 0.0:
+            is_in_area = True
+            break
+
     return is_in_area

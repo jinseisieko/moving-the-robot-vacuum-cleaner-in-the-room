@@ -6,9 +6,11 @@ from collections import deque
 import numpy as np
 import pygame
 from functions import (
-    update_robot_position,
+    update_robot_position_jit,
     find_nearest_intersection,
-    find_nearest_intersection_jit, check_warning_points,
+    find_nearest_intersection_jit,
+    check_warning_points,
+    check_warning_points_jit,
 )
 
 # CONSTANTS
@@ -93,7 +95,9 @@ warning_points_data = np.zeros(
 available_ids = [[set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)]
 pending_draw = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * NUM_LIDAR_RAYS
+moving_full_time = 1e10 - 3
 lidar_rays = []
+
 
 def add_point_to_data(point):
     row = int(point[0] // cell_size)
@@ -112,12 +116,27 @@ def simulation(delta_time):
     if delta_time - lidar_full_time > 0:
         delta_time -= lidar_full_time
         for i in range(NUM_LIDAR_RAYS):
-            alpha = lidar_angle/2 - delta_lidar_angle*i + robot_orientation
-            point = find_nearest_intersection_jit(alpha, robot_x+robot_radius*math.cos(robot_orientation), robot_y+robot_radius*math.sin(robot_orientation), obstacle_segments)
-            lidar_rays.append(np.array([[robot_x+robot_radius*math.cos(robot_orientation), robot_y+robot_radius*math.sin(robot_orientation)],point]))
-            if not check_warning_points(point, warning_points_data, H, cell_size):
+            alpha = lidar_angle / 2 - delta_lidar_angle * i + robot_orientation
+            point = find_nearest_intersection_jit(
+                alpha,
+                robot_x + robot_radius * math.cos(robot_orientation),
+                robot_y + robot_radius * math.sin(robot_orientation),
+                obstacle_segments,
+            )
+            lidar_rays.append(
+                np.array(
+                    [
+                        [
+                            robot_x + robot_radius * math.cos(robot_orientation),
+                            robot_y + robot_radius * math.sin(robot_orientation),
+                        ],
+                        point,
+                    ]
+                )
+            )
+            if not check_warning_points_jit(point, warning_points_data, H, cell_size):
                 add_point_to_data(point)
-    robot_x, robot_y, robot_orientation = update_robot_position(
+    robot_x, robot_y, robot_orientation = update_robot_position_jit(
         robot_x,
         robot_y,
         robot_orientation,
@@ -147,7 +166,7 @@ for i in range(total_segments):
         obstacle_segments[i, 0, :] * K,
         obstacle_segments[i, 1, :] * K,
     )
-
+time.sleep(1)
 while True:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -182,7 +201,7 @@ while True:
     warning_surface = main_surface.copy()
     warning_surface.blit(warning_points_surface, (0, 0))
     for line in lidar_rays:
-        pygame.draw.line(warning_surface, "red", line[0]*K, line[1]*K, 1)
+        pygame.draw.line(warning_surface, "red", line[0] * K, line[1] * K, 1)
     nearest_intersection = find_nearest_intersection_jit(
         robot_orientation, robot_x, robot_y, obstacle_segments
     )
@@ -193,4 +212,4 @@ while True:
     screen.blit(warning_surface, (K * room_width, 0))
     pygame.display.update()
     print(clock.get_fps())
-    clock.tick(120000)
+    clock.tick(int(1 / (lidar_full_time + moving_full_time)))
