@@ -20,7 +20,7 @@ LIDAR_ROTATION_TIME = 2.6527945914557116e-5  # one radian
 LIDAR_TIME = 6.7e-8
 CLEAN_RADIUS_FACTOR = 1.4
 WARNING_RADIUS_FACTOR = 1.2
-NUM_CLEAN_WAIT = 100
+NUM_CLEAN_WAIT = 300
 
 # INPUT
 print("All data is measured in meters (or radians)!!!")
@@ -108,7 +108,7 @@ clean_queue = deque()
 pending_draw_warning_points = deque()
 pending_draw_clear_points = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * NUM_LIDAR_RAYS
-moving_full_time = 1e-3
+moving_full_time = 1e-4
 lidar_rays = []
 
 
@@ -153,15 +153,20 @@ def add_point_to_real_points(point):
 
 pattern1 = [
     (50, 25),
-    (50, 50),
+    (45, 25),
+    (40, 25),
+    (35, 25),
+    (30, 25),
+    (25, 25),
+    (24, 30),
+    (10, 40),
     (10, 50),
+    (20, 50),
+    (30, 50),
+    (40, 50),
     (-50, 50),
 ]
-pattern2 = [
-    (49, 50),
-    (50, 10),
-    (50, -50)
-]
+pattern2 = [(45, 50), (50, 45), (-100, 100)]
 
 
 def simulation(delta_time):
@@ -215,7 +220,7 @@ def simulation(delta_time):
                 robot_x, robot_y, robot_orientation = x, y, orientation
                 break
     else:
-        for wL, wR in pattern2:
+        for wL, wR in [(random.uniform(20, 50), random.uniform(20, 50))] + pattern2:
             x, y, orientation = update_robot_position_jit(
                 robot_x,
                 robot_y,
@@ -235,7 +240,7 @@ def simulation(delta_time):
                 robot_x, robot_y, robot_orientation = x, y, orientation
                 break
         else:
-            robot_x, robot_y, robot_orientation =update_robot_position_jit(
+            robot_x, robot_y, robot_orientation = update_robot_position_jit(
                 robot_x,
                 robot_y,
                 robot_orientation,
@@ -327,4 +332,4 @@ while True:
     screen.blit(clear_surface, (0, K * room_height))
     pygame.display.update()
     print(clock.get_fps())
-    clock.tick(60)
+    clock.tick(1 / moving_full_time + lidar_full_time)
