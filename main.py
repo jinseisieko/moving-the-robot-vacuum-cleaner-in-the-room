@@ -110,11 +110,12 @@ pending_draw_warning_points = deque()
 pending_draw_clear_points = deque()
 pending_draw_real_points = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * NUM_LIDAR_RAYS
-moving_full_time = 1e-3
+moving_full_time = 1e-2
 lidar_rays = []
 T = 0
 timer_trajectory = TIMER_TRAJECTORY
 last_point = np.array([robot_x, robot_y])
+
 
 def add_point_to_warning_points(point):
     row = int(point[0] // cell_size)
@@ -155,25 +156,11 @@ def add_point_to_real_points(point):
     pending_draw_real_points.append(point)
 
 
-pattern1 = [
-    (50, 25),
-    (45, 25),
-    (40, 25),
-    (35, 25),
-    (30, 25),
-    (25, 25),
-    (24, 30),
-    (10, 40),
-    (10, 50),
-    (20, 50),
-    (30, 50),
-    (40, 50),
-    (-50, 50),
-]
-pattern2 = [(45, 50), (50, 45), (-100, 100)]
+wl, wr = 10, 50
 
 
 def simulation(delta_time):
+    global wl, wr
     global robot_x, robot_y, robot_orientation
     if delta_time - lidar_full_time > 0:
         delta_time -= lidar_full_time
@@ -198,63 +185,32 @@ def simulation(delta_time):
             )
             if not check_area_points_jit(point, warning_points_data, H, cell_size):
                 add_point_to_warning_points(point)
-    n = delta_time//moving_full_time
-    for wL, wR in pattern1:
-        x, y, orientation = update_robot_position_jit(
-            robot_x,
-            robot_y,
-            robot_orientation,
-            wL,
-            wR,
-            delta_time,
-            wheel_diameter,
-            wheel_distance / 2,
-        )
-        if not check_area_points_jit(
-            np.array([x, y]),
-            warning_points_data,
-            robot_radius * WARNING_RADIUS_FACTOR,
-            cell_size,
-        ):
-            if not check_area_points_jit(
-                np.array([x, y]),
-                clear_points_data,
-                robot_radius * CLEAN_RADIUS_FACTOR,
-                cell_size,
-            ):
-                robot_x, robot_y, robot_orientation = x, y, orientation
-                break
-    else:
-        for wL, wR in [(random.uniform(20, 50), random.uniform(20, 50))] + pattern2:
-            x, y, orientation = update_robot_position_jit(
-                robot_x,
-                robot_y,
-                robot_orientation,
-                wL,
-                wR,
-                delta_time,
-                wheel_diameter,
-                wheel_distance / 2,
-            )
-            if not check_area_points_jit(
-                np.array([x, y]),
-                warning_points_data,
-                robot_radius * WARNING_RADIUS_FACTOR,
-                cell_size,
-            ):
-                robot_x, robot_y, robot_orientation = x, y, orientation
-                break
+    # dgf
+    next_x, next_y, next_orientation = update_robot_position_jit(robot_x, robot_y, robot_orientation, wl, wr, delta_time, wheel_diameter, wheel_distance/2)
+    is_warning = check_area_points_jit(np.array([next_x, next_y]), warning_points_data,  robot_radius*WARNING_RADIUS_FACTOR, cell_size)
+    is_clear = check_area_points_jit(np.array([next_x, next_y]), clear_points_data,  robot_radius*CLEAN_RADIUS_FACTOR, cell_size)
+    if not is_warning:
+        if is_clear:
+            if wl == 50:
+                wr -= 1
+            else:
+                wl += 1
         else:
-            robot_x, robot_y, robot_orientation = update_robot_position_jit(
-                robot_x,
-                robot_y,
-                robot_orientation,
-                50,
-                -50,
-                delta_time,
-                wheel_diameter,
-                wheel_distance / 2,
-            )
+            if wr == 50:
+                if wl == 10:
+                    pass
+                else:
+                    wl -= 1
+            else:
+                wr += 1
+        robot_x, robot_y, robot_orientation = next_x, next_y, next_orientation
+    else:
+        next_x, next_y, next_orientation = update_robot_position_jit(robot_x, robot_y, robot_orientation, -50, 50,
+                                                                     delta_time, wheel_diameter, wheel_distance / 2)
+        robot_x, robot_y, robot_orientation = next_x, next_y, next_orientation
+
+
+    # fdd
     point = np.array([robot_x, robot_y])
     if not check_area_points_jit(
         point, clear_points_data, H * CLEAN_RADIUS_FACTOR, cell_size
@@ -301,7 +257,13 @@ while True:
     T += t
     timer_trajectory -= t
     if timer_trajectory <= 0:
-        pygame.draw.line(trajectory_surface, (167, 25, 220, 128), last_point*K, np.array([robot_x, robot_y])*K, 2)
+        pygame.draw.line(
+            trajectory_surface,
+            (167, 25, 220, 128),
+            last_point * K,
+            np.array([robot_x, robot_y]) * K,
+            2,
+        )
         last_point = np.array([robot_x, robot_y])
 
     while len(pending_draw_warning_points) != 0:
@@ -325,7 +287,7 @@ while True:
         real_point = pending_draw_real_points.pop()
         pygame.draw.circle(
             real_point_surface,
-            (0, 255,  0, 128),
+            (0, 255, 0, 128),
             real_point * K,
             robot_radius * K,
         )
