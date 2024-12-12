@@ -14,13 +14,14 @@ from functions import (
 )
 
 # CONSTANTS
-NUM_LIDAR_RAYS = 10
-H = 0.05
+NUM_LIDAR_RAYS = 30
+H = 0.15
 LIDAR_ROTATION_TIME = 2.6527945914557116e-5  # one radian
 LIDAR_TIME = 6.7e-8
-CLEAN_RADIUS_FACTOR = 1.4
+CLEAN_RADIUS_FACTOR = 1.5
 WARNING_RADIUS_FACTOR = 1.2
 NUM_CLEAN_WAIT = 300
+TIMER_TRAJECTORY = 1
 
 # INPUT
 print("All data is measured in meters (or radians)!!!")
@@ -107,10 +108,13 @@ available_ids_real_points = [
 clean_queue = deque()
 pending_draw_warning_points = deque()
 pending_draw_clear_points = deque()
+pending_draw_real_points = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * NUM_LIDAR_RAYS
-moving_full_time = 1e-4
+moving_full_time = 1e-3
 lidar_rays = []
-
+T = 0
+timer_trajectory = TIMER_TRAJECTORY
+last_point = np.array([robot_x, robot_y])
 
 def add_point_to_warning_points(point):
     row = int(point[0] // cell_size)
@@ -146,9 +150,9 @@ def add_point_to_real_points(point):
         print("WARN: No available IDs")
         return
     id_ = available_ids_real_points[row][col].pop()
-    warning_points_data[row, col, id_, :2] = point
-    warning_points_data[row, col, id_, 2] = 1
-    pending_draw_warning_points.append(point)
+    real_points_data[row, col, id_, :2] = point
+    real_points_data[row, col, id_, 2] = 1
+    pending_draw_real_points.append(point)
 
 
 pattern1 = [
@@ -194,6 +198,7 @@ def simulation(delta_time):
             )
             if not check_area_points_jit(point, warning_points_data, H, cell_size):
                 add_point_to_warning_points(point)
+    n = delta_time//moving_full_time
     for wL, wR in pattern1:
         x, y, orientation = update_robot_position_jit(
             robot_x,
@@ -255,6 +260,7 @@ def simulation(delta_time):
         point, clear_points_data, H * CLEAN_RADIUS_FACTOR, cell_size
     ):
         add_point_to_clear_points(point)
+        add_point_to_real_points(point)
 
 
 pygame.init()
@@ -268,6 +274,12 @@ warning_points_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
 clear_point_surface = pygame.surface.Surface(
+    (K * room_width, K * room_height), pygame.SRCALPHA
+)
+real_point_surface = pygame.surface.Surface(
+    (K * room_width, K * room_height), pygame.SRCALPHA
+)
+trajectory_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
 
@@ -284,7 +296,13 @@ while True:
         if event.type == pygame.QUIT:
             pygame.quit()
     lidar_rays = []
-    simulation(1 / clock.get_fps() if clock.get_fps() != 0 else 0)
+    t = 1 / clock.get_fps() if clock.get_fps() != 0 else 0
+    simulation(t)
+    T += t
+    timer_trajectory -= t
+    if timer_trajectory <= 0:
+        pygame.draw.line(trajectory_surface, (167, 25, 220, 128), last_point*K, np.array([robot_x, robot_y])*K, 2)
+        last_point = np.array([robot_x, robot_y])
 
     while len(pending_draw_warning_points) != 0:
         warning_point = pending_draw_warning_points.pop()
@@ -302,6 +320,14 @@ while True:
             (0, 0, 255, 128),
             clear_point * K,
             robot_radius * K * CLEAN_RADIUS_FACTOR,
+        )
+    while len(pending_draw_real_points) != 0:
+        real_point = pending_draw_real_points.pop()
+        pygame.draw.circle(
+            real_point_surface,
+            (0, 255,  0, 128),
+            real_point * K,
+            robot_radius * K,
         )
     main_surface = pygame.surface.Surface((K * room_width, K * room_height))
     main_surface.fill("white")
@@ -327,9 +353,14 @@ while True:
     clear_surface = main_surface.copy()
     clear_surface.blit(clear_point_surface, (0, 0))
 
+    real_surface = main_surface.copy()
+    real_surface.blit(real_point_surface, (0, 0))
+    real_surface.blit(trajectory_surface, (0, 0))
+
     screen.blit(main_surface, (0, 0))
     screen.blit(warning_surface, (K * room_width, 0))
     screen.blit(clear_surface, (0, K * room_height))
+    screen.blit(real_surface, (K * room_width, K * room_height))
     pygame.display.update()
     print(clock.get_fps())
     clock.tick(1 / moving_full_time + lidar_full_time)
