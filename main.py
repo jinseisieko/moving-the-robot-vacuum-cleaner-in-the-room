@@ -1,15 +1,11 @@
 import math
 import random
-import time
-from pprint import pprint
 from collections import deque
 import numpy as np
 import pygame
 from functions import (
     update_robot_position_jit,
-    find_nearest_intersection,
     find_nearest_intersection_jit,
-    check_area_points,
     check_area_points_jit,
 )
 
@@ -32,7 +28,7 @@ robot_radius = float(input("The radius of robot:"))
 wheel_diameter = float(input("The diameter of wheels:"))
 wheel_distance = float(input("The distance between the wheels:"))
 lidar_angle = float(input("The laser locator angle (radian):"))
-delta_lidar_angle = 1/30
+delta_lidar_angle = 1 / 30
 robot_x, robot_y = tuple(map(float, input("The start position of robot:").split()))
 robot_orientation = 0
 cell_size = 3 * robot_radius
@@ -44,7 +40,7 @@ num_obstacles = int(input("Number of obstacles:"))
 obstacle_vertices = []
 total_segments = 4
 
-num_lidar_rays = int((1/delta_lidar_angle)*lidar_angle)
+num_lidar_rays = int((1 / delta_lidar_angle) * lidar_angle)
 
 for i in range(num_obstacles):  # initial data entry
     print(f"Obstacle {i}")
@@ -118,6 +114,7 @@ T = 0
 timer_trajectory = TIMER_TRAJECTORY
 last_point = np.array([robot_x, robot_y])
 
+
 def add_point_to_red_points(point):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
@@ -157,8 +154,36 @@ def add_point_to_green_points(point):
     pending_draw_green_points.append(point)
 
 
-pattern1 = list(zip(range(10, 51), [50]*51)) + list(zip([50]*100, range(50, -51, -1)))
-pattern2 = [(45, 50), (50, 45), (-100, 100)]
+pattern1 = [
+    (10, 50),
+    (30, 50),
+    (50, 50),
+    (50, 40),
+    (50, 30),
+    (50, 20),
+    (50, 10),
+    (50, 0),
+    (50, -25),
+    (50, -50),
+]
+pattern2 = [
+    (35, 50),
+    (40, 50),
+    (50, 50),
+    (50, 45),
+    (50, 40),
+    (50, 35),
+    (50, 30),
+    (50, 25),
+    (50, 20),
+    (50, 10),
+    (40, 0),
+    (45, -10),
+    (45, -25),
+    (45, -35),
+    (50, -50),
+]
+pattern3 = pattern2[:]
 
 
 def simulation(delta_time):
@@ -186,7 +211,24 @@ def simulation(delta_time):
             )
             if not check_area_points_jit(point, red_points_data, H, cell_size):
                 add_point_to_red_points(point)
-    for wL, wR in pattern1:
+    is_blue = check_area_points_jit(
+        np.array([robot_x, robot_y]),
+        blue_points_data,
+        robot_radius * BLUE_RADIUS_FACTOR,
+        cell_size,
+    )
+    is_double_blue = check_area_points_jit(
+        np.array([robot_x, robot_y]),
+        blue_points_data,
+        robot_radius * BLUE_RADIUS_FACTOR * 2,
+        cell_size,
+    )
+    pattern = pattern1
+    if is_double_blue:
+        pattern = pattern2
+    for wL, wR in pattern:
+        if is_blue:
+            continue
         x, y, orientation = update_robot_position_jit(
             robot_x,
             robot_y,
@@ -200,20 +242,20 @@ def simulation(delta_time):
         if not check_area_points_jit(
             np.array([x, y]),
             red_points_data,
-                robot_radius * RED_RADIUS_FACTOR,
+            robot_radius * RED_RADIUS_FACTOR,
             cell_size,
         ):
             if not check_area_points_jit(
                 np.array([x, y]),
                 blue_points_data,
-                    robot_radius * BLUE_RADIUS_FACTOR,
+                robot_radius * BLUE_RADIUS_FACTOR,
                 cell_size,
             ):
-                print(wL, wR)
                 robot_x, robot_y, robot_orientation = x, y, orientation
+                print(wL, wR)
                 break
     else:
-        for wL, wR in [(random.uniform(20, 50), random.uniform(20, 50))] + pattern2:
+        for wL, wR in [(random.uniform(20, 50), random.uniform(20, 50))] + pattern3:
             x, y, orientation = update_robot_position_jit(
                 robot_x,
                 robot_y,
@@ -227,11 +269,11 @@ def simulation(delta_time):
             if not check_area_points_jit(
                 np.array([x, y]),
                 red_points_data,
-                    robot_radius * RED_RADIUS_FACTOR,
+                robot_radius * RED_RADIUS_FACTOR,
                 cell_size,
             ):
-                print(wL, wR)
                 robot_x, robot_y, robot_orientation = x, y, orientation
+                print(wL, wR)
                 break
         else:
             robot_x, robot_y, robot_orientation = update_robot_position_jit(
@@ -244,11 +286,8 @@ def simulation(delta_time):
                 wheel_diameter,
                 wheel_distance / 2,
             )
-            print(50, -50)
     point = np.array([robot_x, robot_y])
-    if not check_area_points_jit(
-        point, blue_points_data, H * BLUE_RADIUS_FACTOR, cell_size
-    ):
+    if not check_area_points_jit(point, blue_points_data, H * 3, cell_size):
         add_point_to_blue_points(point)
         add_point_to_green_points(point)
 
@@ -264,6 +303,9 @@ red_points_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
 blue_point_surface = pygame.surface.Surface(
+    (K * room_width, K * room_height), pygame.SRCALPHA
+)
+double_blue_point_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
 green_point_surface = pygame.surface.Surface(
@@ -290,7 +332,13 @@ while True:
     T += t
     timer_trajectory -= t
     if timer_trajectory <= 0:
-        pygame.draw.line(trajectory_surface, (167, 25, 220, 128), last_point*K, np.array([robot_x, robot_y])*K, 2)
+        pygame.draw.line(
+            trajectory_surface,
+            (167, 25, 220, 128),
+            last_point * K,
+            np.array([robot_x, robot_y]) * K,
+            2,
+        )
         last_point = np.array([robot_x, robot_y])
 
     while len(pending_draw_red_points) != 0:
@@ -305,16 +353,23 @@ while True:
     while len(pending_draw_blue_points) != 0:
         blue_point = pending_draw_blue_points.pop()
         pygame.draw.circle(
+            double_blue_point_surface,
+            (0, 0, 255, 60),
+            blue_point * K,
+            robot_radius * K * BLUE_RADIUS_FACTOR * 2,
+        )
+        pygame.draw.circle(
             blue_point_surface,
             (0, 0, 255, 128),
             blue_point * K,
             robot_radius * K * BLUE_RADIUS_FACTOR,
         )
+
     while len(pending_draw_green_points) != 0:
         green_point = pending_draw_green_points.pop()
         pygame.draw.circle(
             green_point_surface,
-            (0, 255,  0, 128),
+            (0, 255, 0, 128),
             green_point * K,
             robot_radius * K,
         )
@@ -340,6 +395,7 @@ while True:
         pygame.draw.line(red_surface, "red", line[0] * K, line[1] * K, 1)
 
     blue_surface = main_surface.copy()
+    blue_surface.blit(double_blue_point_surface, (0, 0))
     blue_surface.blit(blue_point_surface, (0, 0))
 
     green_surface = main_surface.copy()
