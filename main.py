@@ -7,9 +7,9 @@ from functions import (
     update_robot_position_jit,
     find_nearest_intersection_jit,
     check_area_points_jit,
+    count_intersections_jit,
+    check_cleared_point_jit,
 )
-
-# CONSTANTS
 
 H = 0.15
 LIDAR_ROTATION_TIME = 2.6527945914557116e-5  # one radian
@@ -18,8 +18,8 @@ BLUE_RADIUS_FACTOR = 1.5
 RED_RADIUS_FACTOR = 1.2
 NUM_BLUE_WAIT = 300
 TIMER_TRAJECTORY = 1
+YELLOW = "#a09a07"
 
-# INPUT
 print("All data is measured in meters (or radians)!!!")
 room_width, room_height = tuple(map(float, input("Room size:").split()))
 K = 400 / room_height
@@ -31,7 +31,7 @@ lidar_angle = float(input("The laser locator angle (radian):"))
 delta_lidar_angle = 1 / 30
 robot_x, robot_y = tuple(map(float, input("The start position of robot:").split()))
 robot_orientation = 0
-cell_size = 3 * robot_radius
+cell_size = 2 * robot_radius
 num_rows = int(room_width // cell_size + 1)
 num_cols = int(room_height // cell_size + 1)
 
@@ -50,7 +50,6 @@ for i in range(num_obstacles):  # initial data entry
     for j in range(num_vertices):
         obstacle_vertices[-1].append(tuple(map(float, input("vertex x y:").split())))
 
-# processed data for obstacles
 obstacle_segments = np.zeros((total_segments, 2, 2), dtype=float)
 obstacle_segments[0, :, :] = np.array(
     [
@@ -90,6 +89,27 @@ for i, obstacle in enumerate(obstacle_vertices):
             ]
         )
         segment_index += 1
+yellow_points = np.zeros((num_rows, num_cols, 3), dtype=np.float64)
+for i in range(num_rows):
+    for j in range(num_cols):
+        yellow_points[i][j] = np.array(
+            [cell_size / 2 + i * cell_size, cell_size / 2 + j * cell_size, 1],
+            dtype=np.float64,
+        )
+for i in range(num_rows):
+    for j in range(num_cols):
+        if (
+            count_intersections_jit(
+                robot_x,
+                robot_y,
+                yellow_points[i][j][0],
+                yellow_points[i][j][1],
+                obstacle_segments,
+            )
+            % 2
+            != 0
+        ):
+            yellow_points[i][j][2] -= 2.0
 
 red_points_data = np.zeros((num_rows + 1, num_cols + 1, 1000, 3), dtype=float)
 blue_points_data = np.zeros((num_rows + 1, num_cols + 1, 1000, 3), dtype=float)
@@ -104,15 +124,25 @@ available_ids_green_points = [
     [set(range(1000)) for _ in range(num_cols)] for _ in range(num_rows)
 ]
 blue_queue = deque()
+pending_draw_yellow_points = deque()
 pending_draw_red_points = deque()
 pending_draw_blue_points = deque()
 pending_draw_green_points = deque()
 lidar_full_time = (LIDAR_TIME + LIDAR_ROTATION_TIME) * num_lidar_rays
-moving_full_time = 1e-3
+moving_full_time = 5e-3
 lidar_rays = []
 T = 0
 timer_trajectory = TIMER_TRAJECTORY
 last_point = np.array([robot_x, robot_y])
+
+
+def add_point_to_yellow_points(point):
+    row = int(point[0] // cell_size)
+    col = int(point[1] // cell_size)
+    if yellow_points[row, col][2] < 1e-7:
+        return
+    yellow_points[row, col][2] = 0
+    pending_draw_yellow_points.append(point)
 
 
 def add_point_to_red_points(point):
@@ -287,6 +317,9 @@ def simulation(delta_time):
                 wheel_distance / 2,
             )
     point = np.array([robot_x, robot_y])
+    y_tmp = check_cleared_point_jit(robot_x, robot_y, yellow_points, robot_radius)
+    if y_tmp is not None:
+        add_point_to_yellow_points(y_tmp)
     if not check_area_points_jit(point, blue_points_data, H * 3, cell_size):
         add_point_to_blue_points(point)
         add_point_to_green_points(point)
@@ -299,6 +332,21 @@ pygame.display.set_caption("Moving the Robot Vacuum Cleaner in the Room")
 obstacle_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
+yellow_points_surface = pygame.surface.Surface(
+    (K * room_width, K * room_height), pygame.SRCALPHA
+)
+for i in range(num_rows):
+    for j in range(num_cols):
+        if yellow_points[i, j, 2] > 0.0:
+            pygame.draw.circle(
+                yellow_points_surface, YELLOW, yellow_points[i, j, :2] * K, 0.1 * K
+            )
+            continue
+        if yellow_points[i, j, 2] < 0.0:
+            pygame.draw.circle(
+                yellow_points_surface, "red", yellow_points[i, j, :2] * K, 0.1 * K
+            )
+            continue
 red_points_surface = pygame.surface.Surface(
     (K * room_width, K * room_height), pygame.SRCALPHA
 )
@@ -327,7 +375,8 @@ while True:
         if event.type == pygame.QUIT:
             pygame.quit()
     lidar_rays = []
-    t = 1 / clock.get_fps() if clock.get_fps() != 0 else 0
+    # t = 1 / clock.get_fps() if clock.get_fps() != 0 else 0
+    t = moving_full_time + lidar_full_time
     simulation(t)
     T += t
     timer_trajectory -= t
@@ -340,6 +389,14 @@ while True:
             2,
         )
         last_point = np.array([robot_x, robot_y])
+    while len(pending_draw_yellow_points) != 0:
+        yellow_point = pending_draw_yellow_points.pop()
+        pygame.draw.circle(
+            yellow_points_surface,
+            "red",
+            yellow_point * K,
+            1,
+        )
 
     while len(pending_draw_red_points) != 0:
         red_point = pending_draw_red_points.pop()
@@ -400,11 +457,12 @@ while True:
 
     green_surface = main_surface.copy()
     green_surface.blit(green_point_surface, (0, 0))
-    green_surface.blit(trajectory_surface, (0, 0))
+    green_surface.blit(yellow_points_surface, (0, 0))
+    main_surface.blit(trajectory_surface, (0, 0))
 
     screen.blit(main_surface, (0, 0))
     screen.blit(red_surface, (K * room_width, 0))
     screen.blit(blue_surface, (0, K * room_height))
     screen.blit(green_surface, (K * room_width, K * room_height))
     pygame.display.update()
-    clock.tick(1 / moving_full_time + lidar_full_time)
+    clock.tick(1000)

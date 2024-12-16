@@ -121,18 +121,56 @@ def check_area_points_jit(point, warning_points, radius, cell_size):
             warning_points_copy = warning_points[
                 max(0, row + k), max(0, col + j), :, :
             ].copy()
-
             warning_points_copy[:, 0] -= point[0]
             warning_points_copy[:, 1] -= point[1]
-
             distances_squared = (
                 warning_points_copy[:, 0] ** 2 + warning_points_copy[:, 1] ** 2
             )
             distances = np.sqrt(distances_squared)
-
             for i in range(warning_points_copy.shape[0]):
                 if distances[i] < radius and warning_points_copy[i, 2] > 0.0:
                     is_in_area = True
                     break
-
     return is_in_area
+
+
+@nb.njit
+def count_intersections_jit(start_x, start_y, end_x, end_y, segments):
+    ray_segment = np.array([[start_x, start_y], [end_x, end_y]], dtype=np.float64)
+    num_segments = segments.shape[0]
+    segment_start_points = segments[:, 0]
+    segment_end_points = segments[:, 1]
+    direction_segment = segment_end_points - segment_start_points
+    direction_ray = ray_segment[1] - ray_segment[0]
+    intersection_count = 0
+    for i in range(num_segments):
+        det = (
+            direction_segment[i, 0] * direction_ray[1]
+            - direction_segment[i, 1] * direction_ray[0]
+        )
+        if det != 0:
+            p = ray_segment[0] - segment_start_points[i]
+            t = (p[0] * direction_ray[1] - p[1] * direction_ray[0]) / det
+            u = (p[0] * direction_segment[i, 1] - p[1] * direction_segment[i, 0]) / det
+            if 0 <= t <= 1 and 0 <= u <= 1:
+                intersection_count += 1
+    return intersection_count
+
+
+@nb.njit
+def check_cleared_point_jit(x, y, yellow_points, radius):
+    closest_point = None
+    min_distance_squared = float("inf")
+    for i in range(yellow_points.shape[0]):
+        for j in range(yellow_points.shape[1]):
+            if yellow_points[i][j][2] > 0:
+                point_x = yellow_points[i][j][0]
+                point_y = yellow_points[i][j][1]
+                dx = point_x - x
+                dy = point_y - y
+                distance_squared = dx * dx + dy * dy
+                if distance_squared <= radius * radius:
+                    if distance_squared < min_distance_squared:
+                        min_distance_squared = distance_squared
+                        closest_point = np.array([point_x, point_y])
+    return closest_point
