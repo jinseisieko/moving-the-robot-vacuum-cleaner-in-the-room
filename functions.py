@@ -174,3 +174,25 @@ def check_cleared_point_jit(x, y, yellow_points, radius):
                         min_distance_squared = distance_squared
                         closest_point = np.array([point_x, point_y])
     return closest_point
+
+@nb.njit
+def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
+    angles = []
+    for i in range(yellow_points.shape[0]):
+        for j in range(yellow_points.shape[1]):
+            if yellow_points[i][j][2] > 0:
+                print((i, j))
+                point_x = yellow_points[i][j][0]
+                point_y = yellow_points[i][j][1]
+                angle = np.arctan2(point_y - robot_y, point_x - robot_x)
+                angles.append(angle)
+    angles = np.array(angles)
+    min_sum = float('inf')
+    optimal_angle = None
+    for angle in angles:
+        sum_diffs = np.sum(np.abs(angles - angle))
+
+        if sum_diffs < min_sum:
+            min_sum = sum_diffs
+            optimal_angle = angle
+    return optimal_angle
