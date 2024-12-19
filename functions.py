@@ -4,7 +4,8 @@ import numpy as np
 
 
 @nb.njit()
-def update_robot_position_jit(x, y, alpha, wL, wR, dt, D, K):
+def update_robot_position_jit(x, y, alpha, kL, kR, dt, D, K, max_w):
+    wL, wR = max_w * kL, max_w * kR
     if abs(wL - wR) < 10e-10:
         new_alpha = alpha
         new_x = x + dt * (wL * D / 2) * math.cos(alpha)
@@ -177,29 +178,46 @@ def check_cleared_point_jit(x, y, yellow_points, radius):
 
 
 @nb.njit
-def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
-    angles = []
+def calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points):
+    min_distance = float("inf")
+    optimal_angle = None
+    for i in range(yellow_points.shape[0]):
+        for j in range(yellow_points.shape[1]):
+            if yellow_points[i][j][2] > 0:
+                point_x = yellow_points[i][j][0]
+                point_y = yellow_points[i][j][1]
+                dx = point_x - robot_x
+                dy = point_y - robot_y
+                distance_squared = dx * dx + dy * dy
+                angle = np.arctan2(point_y - robot_y, point_x - robot_x)
+                if distance_squared < min_distance:
+                    min_distance = distance_squared
+                    optimal_angle = angle
+    return optimal_angle
+
+
+@nb.njit
+def calculate_yellow_angle_smallest_jit(
+    robot_x, robot_y, robot_orientation, yellow_points
+):
+    min_arc = float("inf")
+    optimal_angle = None
     for i in range(yellow_points.shape[0]):
         for j in range(yellow_points.shape[1]):
             if yellow_points[i][j][2] > 0:
                 point_x = yellow_points[i][j][0]
                 point_y = yellow_points[i][j][1]
                 angle = np.arctan2(point_y - robot_y, point_x - robot_x)
-                angles.append(angle)
-    angles = np.array(angles)
-    min_sum = float("inf")
-    optimal_angle = None
-    for angle in angles:
-        sum_diffs = np.sum(np.abs(angles - angle))
-
-        if sum_diffs < min_sum:
-            min_sum = sum_diffs
-            optimal_angle = angle
+                delta = abs(angle % (2 * math.pi) - robot_orientation % (2 * math.pi))
+                arc = min(delta, 2 * math.pi - delta)
+                if arc < min_arc:
+                    min_arc = arc
+                    optimal_angle = angle
     return optimal_angle
 
 
 @nb.njit
-def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids):
+def initialize_yellow_points_jit(segment, yellow_points, radius, non_initialized_ids):
     initialized_points = []
     A = segment[0]
     B = segment[1]
@@ -232,3 +250,47 @@ def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids
             initialized_points.append(point)
 
     return initialized_points
+
+
+@nb.njit
+def closest_red_point_angle(point, red_points, cell_size):
+    row = int(point[0] // cell_size)
+    col = int(point[1] // cell_size)
+    closest_point = None
+    distance = float('inf')
+
+    # Проверяем соседние ячейки в области 3x3
+    for k in [-1, 0, 1]:
+        for j in [-1, 0, 1]:
+            # Получаем точки из соседней ячейки
+            warning_points_copy = red_points[
+                                  max(0, row + k), max(0, col + j), :, :
+                                  ]
+
+            # Отфильтровываем только валидные точки
+            valid_points = warning_points_copy[warning_points_copy[:, 2] > 0]
+
+            if valid_points.shape[0] == 0:
+                continue  # Если нет валидных точек, пропускаем эту ячейку
+
+            # Вычисляем расстояния до валидных точек
+            dx = valid_points[:, 0] - point[0]
+            dy = valid_points[:, 1] - point[1]
+            distances_squared = dx ** 2 + dy ** 2
+            min_index = np.argmin(distances_squared)
+
+            # Получаем ближайшую валидную точку
+            closest_candidate = valid_points[min_index]
+            closest_distance = np.sqrt(distances_squared[min_index])
+
+            # Обновляем ближайшую точку, если она ближе
+            if closest_distance < distance:
+                closest_point = closest_candidate
+                distance = closest_distance
+
+    if closest_point is None:
+        return None  # Если не нашли ни одной валидной точки
+
+    # Вычисляем угол в сторону ближайшей точки
+    angle = np.arctan2(closest_point[1] - point[1], closest_point[0] - point[0]) + math.pi
+    return angle
