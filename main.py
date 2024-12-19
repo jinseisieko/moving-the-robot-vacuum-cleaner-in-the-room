@@ -10,7 +10,7 @@ from functions import (
     count_intersections_jit,
     check_cleared_point_jit,
     calculate_average_angle_jit,
-    initialize_yellow_points
+    initialize_yellow_points,
 )
 
 H = 0.15
@@ -98,7 +98,7 @@ for i in range(num_rows):
     for j in range(num_cols):
         non_initialized_ids.add((i, j))
         yellow_points[i][j] = np.array(
-            [cell_size / 2 + i * cell_size, cell_size / 2 + j * cell_size, -1.],
+            [cell_size / 2 + i * cell_size, cell_size / 2 + j * cell_size, -1.0],
             dtype=np.float64,
         )
 # for i in range(num_rows):
@@ -151,11 +151,12 @@ def add_point_to_yellow_points(point):
     yellow_points[row, col][2] = 0
     pending_draw_yellow_points.append(point)
 
+
 def add_point_to_initialized_yellow_points(point):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
     non_initialized_ids.discard((row, col))
-    yellow_points[row][col][2] = 1.
+    yellow_points[row][col][2] = 1.0
     pending_draw_initialized_yellow_points.append(point)
 
 
@@ -240,52 +241,99 @@ def simulation(delta_time):
 
         for i in range(num_lidar_rays):
             alpha = lidar_angle / 2 - delta_lidar_angle * i + robot_orientation
-            point = find_nearest_intersection_jit(alpha, robot_pos_x, robot_pos_y, obstacle_segments)
+            point = find_nearest_intersection_jit(
+                alpha, robot_pos_x, robot_pos_y, obstacle_segments
+            )
             lidar_rays.append(np.array([[robot_pos_x, robot_pos_y], point]))
 
             if not check_area_points_jit(point, red_points_data, H, cell_size):
                 add_point_to_red_points(point)
 
-            if (yellow_point := check_cleared_point_jit(point[0], point[1], yellow_points,
-                                                        robot_radius * RED_RADIUS_FACTOR)) is not None:
+            if (
+                yellow_point := check_cleared_point_jit(
+                    point[0], point[1], yellow_points, robot_radius * RED_RADIUS_FACTOR
+                )
+            ) is not None:
                 add_point_to_yellow_points(yellow_point)
     random.shuffle(lidar_rays)
     for lidar_segment in lidar_rays[:5]:
-        for initialized_yellow_point in initialize_yellow_points(lidar_segment, yellow_points, robot_radius / 2,
-                                                                 non_initialized_ids):
+        for initialized_yellow_point in initialize_yellow_points(
+            lidar_segment, yellow_points, robot_radius / 2, non_initialized_ids
+        ):
             add_point_to_initialized_yellow_points(initialized_yellow_point)
 
-    is_blue = check_area_points_jit(np.array([robot_x, robot_y]), blue_points_data, robot_radius * BLUE_RADIUS_FACTOR,
-                                    cell_size)
-    is_double_blue = check_area_points_jit(np.array([robot_x, robot_y]), blue_points_data,
-                                           robot_radius * BLUE_RADIUS_FACTOR * 2, cell_size)
+    is_blue = check_area_points_jit(
+        np.array([robot_x, robot_y]),
+        blue_points_data,
+        robot_radius * BLUE_RADIUS_FACTOR,
+        cell_size,
+    )
+    is_double_blue = check_area_points_jit(
+        np.array([robot_x, robot_y]),
+        blue_points_data,
+        robot_radius * BLUE_RADIUS_FACTOR * 2,
+        cell_size,
+    )
 
     pattern = pattern1 if not is_double_blue else pattern2
 
     for wL, wR in pattern:
         if is_blue:
             continue
-        x, y, orientation = update_robot_position_jit(robot_x, robot_y, robot_orientation, wL, wR, delta_time,
-                                                      wheel_diameter, wheel_distance / 2)
+        x, y, orientation = update_robot_position_jit(
+            robot_x,
+            robot_y,
+            robot_orientation,
+            wL,
+            wR,
+            delta_time,
+            wheel_diameter,
+            wheel_distance / 2,
+        )
 
-        if not check_area_points_jit(np.array([x, y]), red_points_data, robot_radius * RED_RADIUS_FACTOR, cell_size):
-            if not check_area_points_jit(np.array([x, y]), blue_points_data, robot_radius * BLUE_RADIUS_FACTOR,
-                                         cell_size):
+        if not check_area_points_jit(
+            np.array([x, y]),
+            red_points_data,
+            robot_radius * RED_RADIUS_FACTOR,
+            cell_size,
+        ):
+            if not check_area_points_jit(
+                np.array([x, y]),
+                blue_points_data,
+                robot_radius * BLUE_RADIUS_FACTOR,
+                cell_size,
+            ):
                 robot_x, robot_y, robot_orientation = x, y, orientation
                 break
     else:
         angle = calculate_average_angle_jit(robot_x, robot_y, yellow_points)
         if angle is not None:
             delta = (angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
-            wL, wR = (50 - 100 / (2*math.pi) * delta, 50) if delta > 0 else (50, 50 - 100 / (2*math.pi) * (-delta))
+            wL, wR = (
+                (50 - 100 / (2 * math.pi) * delta, 50)
+                if delta > 0
+                else (50, 50 - 100 / (2 * math.pi) * (-delta))
+            )
             global yellow_angle
             yellow_angle = angle
 
             for wL, wR in [(wL, wR)] + pattern3:
-                x, y, orientation = update_robot_position_jit(robot_x, robot_y, robot_orientation, wL, wR, delta_time,
-                                                              wheel_diameter, wheel_distance / 2)
-                if not check_area_points_jit(np.array([x, y]), red_points_data, robot_radius * RED_RADIUS_FACTOR,
-                                             cell_size):
+                x, y, orientation = update_robot_position_jit(
+                    robot_x,
+                    robot_y,
+                    robot_orientation,
+                    wL,
+                    wR,
+                    delta_time,
+                    wheel_diameter,
+                    wheel_distance / 2,
+                )
+                if not check_area_points_jit(
+                    np.array([x, y]),
+                    red_points_data,
+                    robot_radius * RED_RADIUS_FACTOR,
+                    cell_size,
+                ):
                     robot_x, robot_y, robot_orientation = x, y, orientation
                     break
 
@@ -379,10 +427,8 @@ while True:
             yellow_points_surface,
             "red",
             yellow_point * K,
-            0.1 * K*2,
+            0.1 * K * 2,
         )
-
-
 
     while len(pending_draw_red_points) != 0:
         red_point = pending_draw_red_points.pop()
@@ -445,7 +491,19 @@ while True:
     green_surface.blit(green_point_surface, (0, 0))
     green_surface.blit(yellow_points_surface, (0, 0))
     if yellow_angle is not None:
-        pygame.draw.line(green_surface, "yellow", np.array([robot_x, robot_y])*K, np.array([robot_x+100*math.cos(yellow_angle), robot_y+100*math.sin(yellow_angle)])*K, 3)
+        pygame.draw.line(
+            green_surface,
+            "yellow",
+            np.array([robot_x, robot_y]) * K,
+            np.array(
+                [
+                    robot_x + 100 * math.cos(yellow_angle),
+                    robot_y + 100 * math.sin(yellow_angle),
+                ]
+            )
+            * K,
+            3,
+        )
     main_surface.blit(trajectory_surface, (0, 0))
 
     screen.blit(main_surface, (0, 0))

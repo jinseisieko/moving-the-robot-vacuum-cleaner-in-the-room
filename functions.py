@@ -175,6 +175,7 @@ def check_cleared_point_jit(x, y, yellow_points, radius):
                         closest_point = np.array([point_x, point_y])
     return closest_point
 
+
 @nb.njit
 def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
     angles = []
@@ -186,7 +187,7 @@ def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
                 angle = np.arctan2(point_y - robot_y, point_x - robot_x)
                 angles.append(angle)
     angles = np.array(angles)
-    min_sum = float('inf')
+    min_sum = float("inf")
     optimal_angle = None
     for angle in angles:
         sum_diffs = np.sum(np.abs(angles - angle))
@@ -195,6 +196,7 @@ def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
             min_sum = sum_diffs
             optimal_angle = angle
     return optimal_angle
+
 
 @nb.njit
 def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids):
@@ -211,7 +213,7 @@ def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids
 
         if AB_length_squared == 0:
             distance_squared = np.dot(AC, AC)
-            if distance_squared <= radius ** 2:
+            if distance_squared <= radius**2:
                 initialized_points.append(point)
             continue
 
@@ -226,9 +228,7 @@ def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids
 
         distance_squared = np.dot(C - nearest_point, C - nearest_point)
 
-        if distance_squared <= radius ** 2:
+        if distance_squared <= radius**2:
             initialized_points.append(point)
 
     return initialized_points
-
-
