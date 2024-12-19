@@ -181,7 +181,6 @@ def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
     for i in range(yellow_points.shape[0]):
         for j in range(yellow_points.shape[1]):
             if yellow_points[i][j][2] > 0:
-                print((i, j))
                 point_x = yellow_points[i][j][0]
                 point_y = yellow_points[i][j][1]
                 angle = np.arctan2(point_y - robot_y, point_x - robot_x)
@@ -196,3 +195,40 @@ def calculate_average_angle_jit(robot_x, robot_y, yellow_points):
             min_sum = sum_diffs
             optimal_angle = angle
     return optimal_angle
+
+@nb.njit
+def initialize_yellow_points(segment, yellow_points, radius, non_initialized_ids):
+    initialized_points = []
+    A = segment[0]
+    B = segment[1]
+    AB = B - A
+    AB_length_squared = np.dot(AB, AB)
+
+    for i, j in non_initialized_ids:
+        point = yellow_points[i][j][:2]
+        C = point
+        AC = C - A
+
+        if AB_length_squared == 0:
+            distance_squared = np.dot(AC, AC)
+            if distance_squared <= radius ** 2:
+                initialized_points.append(point)
+            continue
+
+        t = np.dot(AC, AB) / AB_length_squared
+
+        if t < 0:
+            nearest_point = A
+        elif t > 1:
+            nearest_point = B
+        else:
+            nearest_point = A + t * AB
+
+        distance_squared = np.dot(C - nearest_point, C - nearest_point)
+
+        if distance_squared <= radius ** 2:
+            initialized_points.append(point)
+
+    return initialized_points
+
+
