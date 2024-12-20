@@ -16,9 +16,9 @@ H = 0.01
 LIDAR_ROTATION_TIME = 2.6527945914557116e-5
 LIDAR_TIME = 6.7e-8
 RED_RADIUS_FACTOR = 1.2
-YELLOW_RADIUS_FACTOR = 0.8
+YELLOW_RADIUS_FACTOR = 0.9
 TIMER_TRAJECTORY = 1
-MAX_W = 100
+MAX_W = 50
 MAX_DW = 10
 YELLOW = "#a09a07"
 
@@ -34,7 +34,7 @@ delta_lidar_angle = 1 / 30
 robot_x, robot_y = tuple(map(float, input("The start position of robot:").split()))
 robot_orientation = 0
 cell_size = 2 * robot_radius
-yellow_cell_size = robot_radius / 1.5
+yellow_cell_size = robot_radius / 1.2
 num_rows = int(room_width // cell_size + 1)
 num_cols = int(room_height // cell_size + 1)
 yellow_num_rows = int(room_width // yellow_cell_size + 1)
@@ -210,6 +210,8 @@ def simulation(delta_time):
     global stop_count
     global robot_x, robot_y, robot_orientation
     global last_kR, last_kL
+    global save_time
+
     if delta_time - lidar_full_time > 0:
         delta_time -= lidar_full_time
 
@@ -238,28 +240,62 @@ def simulation(delta_time):
             lidar_segment, yellow_points, robot_radius / 2, non_initialized_ids
         ):
             add_point_to_initialized_yellow_points(initialized_yellow_point)
-    if stop_count > 10:
-        kL, kR = 2, 2
-        x, y, orientation = update_robot_position_jit(
-            robot_x,
-            robot_y,
-            robot_orientation,
-            kL,
-            kR,
-            delta_time,
-            wheel_diameter,
-            wheel_distance / 2,
-            MAX_W,
-        )
-        last_kL, last_kR = kL, kR
-        print(last_kL, last_kR)
-        robot_x, robot_y, robot_orientation = x, y, orientation
-    else:
-        angle = calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points)
-        global help_yellow_angle
-        help_yellow_angle = closest_red_point_angle(np.array([robot_x, robot_y]), red_points_data, cell_size)
-        if angle is not None:
-            delta = (angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
+
+    angle = calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points)
+    global help_yellow_angle, start_angle, yellow_angle
+    help_yellow_angle = closest_red_point_angle(np.array([robot_x, robot_y]), red_points_data, cell_size)
+    yellow_angle = angle
+    if angle is not None:
+        delta = (angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
+        if save_time > 1e-10:
+            if math.degrees((yellow_angle % (2*math.pi) - help_yellow_angle % (2*math.pi))) > 0:
+                for kL, kR in [(dk,dk/2), (-dk, dk)]:
+                    x, y, orientation = update_robot_position_jit(
+                        robot_x,
+                        robot_y,
+                        robot_orientation,
+                        kL,
+                        kR,
+                        delta_time,
+                        wheel_diameter,
+                        wheel_distance / 2,
+                        MAX_W,
+                    )
+                    if not check_area_points_jit(
+                            np.array([x, y]),
+                            red_points_data,
+                            robot_radius * RED_RADIUS_FACTOR,
+                            cell_size,
+                    ):
+                        last_kL, last_kR = kL, kR
+                        print(last_kL, last_kR)
+                        robot_x, robot_y, robot_orientation = x, y, orientation
+                        break
+            else:
+                for kL, kR in [(dk/2,dk), (dk, -dk)]:
+                    x, y, orientation = update_robot_position_jit(
+                        robot_x,
+                        robot_y,
+                        robot_orientation,
+                        kL,
+                        kR,
+                        delta_time,
+                        wheel_diameter,
+                        wheel_distance / 2,
+                        MAX_W,
+                    )
+                    if not check_area_points_jit(
+                            np.array([x, y]),
+                            red_points_data,
+                            robot_radius * RED_RADIUS_FACTOR,
+                            cell_size,
+                    ):
+                        last_kL, last_kR = kL, kR
+                        print(last_kL, last_kR)
+                        robot_x, robot_y, robot_orientation = x, y, orientation
+                        break
+
+        else:
             if delta > 0:
                 nL = 1 - (3 / math.pi) * delta
                 nR = 1
@@ -276,8 +312,6 @@ def simulation(delta_time):
             else:
                 kR = last_kR + dk if last_kR - dk < nR else nR
 
-            global yellow_angle
-            yellow_angle = angle
 
             x, y, orientation = update_robot_position_jit(
                 robot_x,
@@ -381,26 +415,9 @@ def simulation(delta_time):
                         print(last_kL, last_kR)
                         robot_x, robot_y, robot_orientation = x, y, orientation
                     else:
-                        if delta > 0:
-                            kL = - min(abs(last_kL), abs(last_kR), abs(kR), abs(kL))
-                            kR = + min(abs(last_kL), abs(last_kR), abs(kR), abs(kL))
-                        else:
-                            kL = + min(abs(last_kL), abs(last_kR))
-                            kR = - min(abs(last_kL), abs(last_kR))
-                        x, y, orientation = update_robot_position_jit(
-                            robot_x,
-                            robot_y,
-                            robot_orientation,
-                            kL,
-                            kR,
-                            delta_time,
-                            wheel_diameter,
-                            wheel_distance / 2,
-                            MAX_W,
-                        )
-                        last_kL, last_kR = kL, kR
-                        print(last_kL, last_kR)
-                        robot_x, robot_y, robot_orientation = x, y, orientation
+                        save_time = 20
+                        start_angle = None
+
 
     point = np.array([robot_x, robot_y])
     y_tmp = check_cleared_point_jit(
@@ -453,6 +470,8 @@ for i in range(total_segments):
         obstacle_segments[i, 0, :] * K,
         obstacle_segments[i, 1, :] * K,
     )
+save_time = 0
+start_angle = None
 stop_count = 0
 while True:
     for event in pygame.event.get():
@@ -463,10 +482,16 @@ while True:
     yellow_angle = None
     old_x, old_y = robot_x, robot_y
     simulation(t)
-    if abs(old_x - robot_x) < 1e-4 and abs(old_y - robot_y) < 1e-4:
+    if abs(old_x - robot_x) < 1e-5 and abs(old_y-robot_y) < 1e-5:
         stop_count += 1
+        if stop_count > 10:
+            save_time = 20
+            stop_count = 0
+            start_angle = None
     else:
         stop_count = 0
+
+    save_time = max(save_time-t, 0)
     T += t
     timer_trajectory -= t
     if timer_trajectory <= 0:
