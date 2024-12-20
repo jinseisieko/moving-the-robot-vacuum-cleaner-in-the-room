@@ -194,10 +194,9 @@ def calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points):
                 distance_squared = dx * dx + dy * dy
                 angle = np.arctan2(point_y - robot_y, point_x - robot_x)
                 if distance_squared < min_distance:
-                    if priority < yellow_points[i][j][2]:
-                        min_distance = distance_squared
-                        optimal_angle = angle
-                        priority = yellow_points[i][j][2]
+                    min_distance = distance_squared
+                    optimal_angle = angle
+                    priority = yellow_points[i][j][2]
     return optimal_angle
 
 
@@ -384,8 +383,7 @@ def calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points):
                 dy = point_y - robot_y
                 distance_squared = dx * dx + dy * dy
                 if distance_squared < min_distance:
-                    if priority < yellow_points[i][j][2]:
-                        point = yellow_points[i][j][:2]
-                        min_distance = distance_squared
-                        priority = yellow_points[i][j][2]
+                    point = yellow_points[i][j][:2]
+                    min_distance = distance_squared
+                    priority = yellow_points[i][j][2]
     return point

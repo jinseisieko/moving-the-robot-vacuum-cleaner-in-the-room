@@ -22,8 +22,8 @@ RED_RADIUS_FACTOR = 1.2
 YELLOW_RADIUS_FACTOR = 0.9
 TRAJECTORY_RADIUS_FACTOR = 0.2
 TIMER_TRAJECTORY = 1
-MAX_W = 100
-MAX_DW = 10
+MAX_W = 10
+MAX_DW = 1
 YELLOW = "#a09a07"
 
 print("All data is measured in meters (or radians)!!!")
