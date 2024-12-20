@@ -180,6 +180,7 @@ def check_cleared_point_jit(x, y, yellow_points, radius):
 @nb.njit
 def calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points):
     min_distance = float("inf")
+    priority = -1
     optimal_angle = None
     for i in range(yellow_points.shape[0]):
         for j in range(yellow_points.shape[1]):
@@ -191,8 +192,10 @@ def calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points):
                 distance_squared = dx * dx + dy * dy
                 angle = np.arctan2(point_y - robot_y, point_x - robot_x)
                 if distance_squared < min_distance:
-                    min_distance = distance_squared
-                    optimal_angle = angle
+                    if priority < yellow_points[i][j][2]:
+                        min_distance = distance_squared
+                        optimal_angle = angle
+                        priority = yellow_points[i][j][2]
     return optimal_angle
 
 
@@ -251,46 +254,87 @@ def initialize_yellow_points_jit(segment, yellow_points, radius, non_initialized
 
     return initialized_points
 
-
+def update_priority_yellow_points(x, y, yellow_points, radius):
+    for i in range(yellow_points.shape[0]):
+        for j in range(yellow_points.shape[1]):
+            if yellow_points[i][j][2] > 0:
+                point_x = yellow_points[i][j][0]
+                point_y = yellow_points[i][j][1]
+                dx = point_x - x
+                dy = point_y - y
+                distance_squared = dx * dx + dy * dy
+                if distance_squared <= radius * radius:
+                    yellow_points[i][j][2] += 0.1
 @nb.njit
-def closest_red_point_angle(point, red_points, cell_size):
+def closest_red_point_angle(point, red_points, cell_size, radius):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
     closest_point = None
     distance = float('inf')
-
-    # Проверяем соседние ячейки в области 3x3
     for k in [-1, 0, 1]:
         for j in [-1, 0, 1]:
-            # Получаем точки из соседней ячейки
             warning_points_copy = red_points[
                                   max(0, row + k), max(0, col + j), :, :
                                   ]
-
-            # Отфильтровываем только валидные точки
             valid_points = warning_points_copy[warning_points_copy[:, 2] > 0]
 
             if valid_points.shape[0] == 0:
-                continue  # Если нет валидных точек, пропускаем эту ячейку
-
-            # Вычисляем расстояния до валидных точек
+                continue
             dx = valid_points[:, 0] - point[0]
             dy = valid_points[:, 1] - point[1]
             distances_squared = dx ** 2 + dy ** 2
             min_index = np.argmin(distances_squared)
-
-            # Получаем ближайшую валидную точку
             closest_candidate = valid_points[min_index]
             closest_distance = np.sqrt(distances_squared[min_index])
-
-            # Обновляем ближайшую точку, если она ближе
             if closest_distance < distance:
                 closest_point = closest_candidate
                 distance = closest_distance
 
     if closest_point is None:
-        return None  # Если не нашли ни одной валидной точки
-
-    # Вычисляем угол в сторону ближайшей точки
+        return None
+    if distance > radius:
+        return None
     angle = np.arctan2(closest_point[1] - point[1], closest_point[0] - point[0]) + math.pi
     return angle
+
+
+def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, delta_a):
+    points = []
+    while x1 != x2 and y1 != y2:
+        p = min(delta_s, ((x1-x2)**2+(y1-y2)**2)**0.5)
+        angle = math.atan2(y2-y1, x2-x1)
+        next_x = x1 + p*math.cos(angle)
+        next_y = y1 + p*math.cos(angle)
+        flag = True
+        while check_area_points_jit(np.array([next_x, next_y]), red_points, radius, cell_size) or flag:
+            next_x = x1 + p * math.cos(angle)
+            next_y = y1 + p * math.cos(angle)
+            angle += delta_a
+            flag = False
+            for i, point in enumerate(points[:-1]):
+                segment = np.array([point, points[i + 1]])
+                A = segment[0]
+                B = segment[1]
+                AB = B - A
+                AB_length_squared = np.dot(AB, AB)
+                C = np.array([next_x, next_y])
+                AC = C - A
+                if AB_length_squared == 0:
+                    distance_squared = np.dot(AC, AC)
+                    if distance_squared <= (delta_s/2) ** 2:
+                        flag = True
+                    continue
+                t = np.dot(AC, AB) / AB_length_squared
+                if t < 0:
+                    nearest_point = A
+                elif t > 1:
+                    nearest_point = B
+                else:
+                    nearest_point = A + t * AB
+                distance_squared = np.dot(C - nearest_point, C - nearest_point)
+                if distance_squared <= (delta_s/2) ** 2:
+                    flag = True
+        points.append(np.array([next_x, next_y]))
+        x1 = next_x
+        y1 = next_y
+    return points
