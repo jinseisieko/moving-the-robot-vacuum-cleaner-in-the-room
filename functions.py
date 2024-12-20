@@ -1,4 +1,6 @@
 import math
+import random
+
 import numba as nb
 import numpy as np
 
@@ -298,32 +300,44 @@ def closest_red_point_angle(point, red_points, cell_size, radius):
     return angle
 
 
+@nb.njit
 def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, delta_a):
-    points = []
+    max_points = 10000  # Set a maximum number of points to avoid dynamic resizing
+    points = np.empty((max_points, 2))  # Preallocate space for points
+    count = 0  # Counter for the number of points
+    k = random.randint(0, 1) * 2 - 1
+
+
     while x1 != x2 and y1 != y2:
-        p = min(delta_s, ((x1-x2)**2+(y1-y2)**2)**0.5)
-        angle = math.atan2(y2-y1, x2-x1)
-        next_x = x1 + p*math.cos(angle)
-        next_y = y1 + p*math.cos(angle)
+        p = min(delta_s, ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5)
+        angle = math.atan2(y2 - y1, x2 - x1)
+        next_x = x1 + p * math.cos(angle)
+        next_y = y1 + p * math.sin(angle)  # Corrected to use sin for y-coordinate
         flag = True
+        count_trying = 0
         while check_area_points_jit(np.array([next_x, next_y]), red_points, radius, cell_size) or flag:
+            count_trying += 1
+            if count_trying > 361:
+                return None
             next_x = x1 + p * math.cos(angle)
-            next_y = y1 + p * math.cos(angle)
-            angle += delta_a
+            next_y = y1 + p * math.sin(angle)  # Corrected to use sin for y-coordinate
+            angle += k*delta_a
             flag = False
-            for i, point in enumerate(points[:-1]):
-                segment = np.array([point, points[i + 1]])
-                A = segment[0]
-                B = segment[1]
+
+            for i in range(max(0, count - 10), count - 1):
+                A = points[i]
+                B = points[i + 1]
                 AB = B - A
                 AB_length_squared = np.dot(AB, AB)
                 C = np.array([next_x, next_y])
                 AC = C - A
+
                 if AB_length_squared == 0:
                     distance_squared = np.dot(AC, AC)
-                    if distance_squared <= (delta_s/2) ** 2:
+                    if distance_squared <= (delta_s / 2) ** 2:
                         flag = True
                     continue
+
                 t = np.dot(AC, AB) / AB_length_squared
                 if t < 0:
                     nearest_point = A
@@ -331,10 +345,47 @@ def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, de
                     nearest_point = B
                 else:
                     nearest_point = A + t * AB
+
                 distance_squared = np.dot(C - nearest_point, C - nearest_point)
-                if distance_squared <= (delta_s/2) ** 2:
+                if distance_squared <= (delta_s / 2) ** 2:
                     flag = True
-        points.append(np.array([next_x, next_y]))
+
+            if p < delta_s:
+                flag = False
+        if count > max_points:
+            return None
+        # Store the new point
+        if count_trying < 1:
+            count -= 1
+            dx = points[count-1, 0] - next_x
+            dy = points[count-1, 1] - next_y
+            if dx**2+dy**2 > (delta_s**2)*5:
+                count += 1
+        points[count, 0] = next_x
+        points[count, 1] = next_y
+        count += 1
+
         x1 = next_x
         y1 = next_y
-    return points
+
+    return points[:count]
+
+@nb.njit
+def calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points):
+    min_distance = float("inf")
+    priority = -1
+    point = None
+    for i in range(yellow_points.shape[0]):
+        for j in range(yellow_points.shape[1]):
+            if yellow_points[i][j][2] > 0:
+                point_x = yellow_points[i][j][0]
+                point_y = yellow_points[i][j][1]
+                dx = point_x - robot_x
+                dy = point_y - robot_y
+                distance_squared = dx * dx + dy * dy
+                if distance_squared < min_distance:
+                    if priority < yellow_points[i][j][2]:
+                        point = yellow_points[i][j][:2]
+                        min_distance = distance_squared
+                        priority = yellow_points[i][j][2]
+    return point

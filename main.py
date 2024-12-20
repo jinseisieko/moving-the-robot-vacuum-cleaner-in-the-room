@@ -11,6 +11,8 @@ from functions import (
     calculate_yellow_angle_closest_jit,
     initialize_yellow_points_jit, closest_red_point_angle,
     update_priority_yellow_points,
+    create_trajectory,
+    calculate_yellow_point_closest_jit
 )
 
 H = 0.01
@@ -18,6 +20,7 @@ LIDAR_ROTATION_TIME = 2.6527945914557116e-5
 LIDAR_TIME = 6.7e-8
 RED_RADIUS_FACTOR = 1.2
 YELLOW_RADIUS_FACTOR = 0.9
+TRAJECTORY_RADIUS_FACTOR = 0.2
 TIMER_TRAJECTORY = 1
 MAX_W = 100
 MAX_DW = 10
@@ -206,12 +209,14 @@ pattern = list(
 
 last_kL, last_kR = 0.0, 0.0
 dk = MAX_DW / MAX_W
+trajectory = None
 
 def simulation(delta_time):
     global stop_count
     global robot_x, robot_y, robot_orientation
     global last_kR, last_kL
     global save_time
+    global trajectory
 
     if delta_time - lidar_full_time > 0:
         delta_time -= lidar_full_time
@@ -241,13 +246,65 @@ def simulation(delta_time):
             lidar_segment, yellow_points, robot_radius / 2, non_initialized_ids
         ):
             add_point_to_initialized_yellow_points(initialized_yellow_point)
-
-    angle = calculate_yellow_angle_closest_jit(robot_x, robot_y, yellow_points)
+    point = calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points)
+    if trajectory is None:
+        trajectory = create_trajectory(robot_x, robot_y, point[0], point[1], red_points_data, robot_radius*RED_RADIUS_FACTOR*1.001, cell_size, 0.3, math.radians(5))
+    if trajectory is None or len(trajectory) == 0:
+        trajectory = None
+        need_point = point
+    else:
+        need_point = trajectory[0]
+    if check_area_points_jit(need_point, red_points_data, robot_radius*RED_RADIUS_FACTOR, cell_size):
+        trajectory = None
+        need_point = point
+    angle = np.arctan2(need_point[1] - robot_y, need_point[0]-robot_x)
     global help_yellow_angle, start_angle, yellow_angle
     help_yellow_angle = closest_red_point_angle(np.array([robot_x, robot_y]), red_points_data, cell_size, robot_radius*RED_RADIUS_FACTOR*1.1)
     yellow_angle = angle
-    if angle is not None:
-        delta = (angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
+    delta = (angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
+    if delta > 0:
+        nL = 1 - (3 / math.pi) * delta
+        nR = 1
+
+    else:
+        nL = 1
+        nR = 1 - (3 / math.pi) * (-delta)
+    if last_kL > nL:
+        kL = last_kL - dk if last_kL - dk > nL else nL
+    else:
+        kL = last_kL + dk if last_kL + dk < nL else nL
+    if last_kR > nR:
+        kR = last_kR - dk if last_kR - dk > nR else nR
+    else:
+        kR = last_kR + dk if last_kR - dk < nR else nR
+
+
+    x, y, orientation = update_robot_position_jit(
+        robot_x,
+        robot_y,
+        robot_orientation,
+        kL,
+        kR,
+        delta_time,
+        wheel_diameter,
+        wheel_distance / 2,
+        MAX_W,
+    )
+    if not check_area_points_jit(
+        np.array([x, y]),
+        red_points_data,
+        robot_radius * RED_RADIUS_FACTOR,
+        cell_size,
+    ):
+        last_kL, last_kR = kL, kR
+        print(last_kL, last_kR)
+        robot_x, robot_y, robot_orientation = x, y, orientation
+    else:
+        diff = (yellow_angle - help_yellow_angle) % (2 * math.pi)
+        if diff > np.pi:
+            diff -= 2 * np.pi
+        new_angle = help_yellow_angle + diff/2
+        delta = (new_angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
         if delta > 0:
             nL = 1 - (3 / math.pi) * delta
             nR = 1
@@ -264,7 +321,6 @@ def simulation(delta_time):
         else:
             kR = last_kR + dk if last_kR - dk < nR else nR
 
-
         x, y, orientation = update_robot_position_jit(
             robot_x,
             robot_y,
@@ -277,19 +333,16 @@ def simulation(delta_time):
             MAX_W,
         )
         if not check_area_points_jit(
-            np.array([x, y]),
-            red_points_data,
-            robot_radius * RED_RADIUS_FACTOR,
-            cell_size,
-        ) and help_yellow_angle is None:
+                np.array([x, y]),
+                red_points_data,
+                robot_radius * RED_RADIUS_FACTOR,
+                cell_size,
+        ):
             last_kL, last_kR = kL, kR
             print(last_kL, last_kR)
             robot_x, robot_y, robot_orientation = x, y, orientation
         else:
-            diff = (yellow_angle - help_yellow_angle) % (2 * math.pi)
-            if diff > np.pi:
-                diff -= 2 * np.pi
-            new_angle = help_yellow_angle + diff/2
+            new_angle = help_yellow_angle
             delta = (new_angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
             if delta > 0:
                 nL = 1 - (3 / math.pi) * delta
@@ -328,24 +381,13 @@ def simulation(delta_time):
                 print(last_kL, last_kR)
                 robot_x, robot_y, robot_orientation = x, y, orientation
             else:
-                new_angle = help_yellow_angle
-                delta = (new_angle - robot_orientation + math.pi) % (2 * math.pi) - math.pi
+                k_ = (abs(last_kR) + abs(last_kL))/2
                 if delta > 0:
-                    nL = 1 - (3 / math.pi) * delta
-                    nR = 1
-
+                    kL = -k_
+                    kR = k_
                 else:
-                    nL = 1
-                    nR = 1 - (3 / math.pi) * (-delta)
-                if last_kL > nL:
-                    kL = last_kL - dk if last_kL - dk > nL else nL
-                else:
-                    kL = last_kL + dk if last_kL + dk < nL else nL
-                if last_kR > nR:
-                    kR = last_kR - dk if last_kR - dk > nR else nR
-                else:
-                    kR = last_kR + dk if last_kR - dk < nR else nR
-
+                    kL = k_
+                    kR = -k_
                 x, y, orientation = update_robot_position_jit(
                     robot_x,
                     robot_y,
@@ -366,38 +408,15 @@ def simulation(delta_time):
                     last_kL, last_kR = kL, kR
                     print(last_kL, last_kR)
                     robot_x, robot_y, robot_orientation = x, y, orientation
-                else:
-                    k_ = (abs(last_kR) + abs(last_kL))/2
-                    if delta > 0:
-                        kL = -k_
-                        kR = k_
-                    else:
-                        kL = k_
-                        kR = -k_
-                    x, y, orientation = update_robot_position_jit(
-                        robot_x,
-                        robot_y,
-                        robot_orientation,
-                        kL,
-                        kR,
-                        delta_time,
-                        wheel_diameter,
-                        wheel_distance / 2,
-                        MAX_W,
-                    )
-                    if not check_area_points_jit(
-                            np.array([x, y]),
-                            red_points_data,
-                            robot_radius * RED_RADIUS_FACTOR,
-                            cell_size,
-                    ):
-                        last_kL, last_kR = kL, kR
-                        print(last_kL, last_kR)
-                        robot_x, robot_y, robot_orientation = x, y, orientation
     point = np.array([robot_x, robot_y])
     y_tmp = check_cleared_point_jit(
         robot_x, robot_y, yellow_points, robot_radius * YELLOW_RADIUS_FACTOR
     )
+    if abs(need_point[0] - robot_x) < robot_radius*TRAJECTORY_RADIUS_FACTOR and abs(need_point[1] - robot_y) < robot_radius*TRAJECTORY_RADIUS_FACTOR:
+        if trajectory is None or len(trajectory) == 0:
+            trajectory = None
+        else:
+            trajectory = trajectory[1:]
     update_priority_yellow_points(robot_x, robot_y, yellow_points, robot_radius*3)
     if y_tmp is not None:
         add_point_to_yellow_points(y_tmp)
@@ -569,6 +588,10 @@ while True:
             1,
         )
     main_surface.blit(trajectory_surface, (0, 0))
+    if trajectory is not None and len(trajectory) > 0:
+        pygame.draw.line(main_surface, "red", np.array([robot_x, robot_y]) * K, trajectory[0] * K, 1)
+        for i, point in enumerate(trajectory[:-1]):
+            pygame.draw.line(main_surface, "red", point*K, trajectory[i+1]*K, 1)
     screen.blit(main_surface, (0, 0))
     screen.blit(red_surface, (K * room_width, 0))
     screen.blit(yellow_surface, (0, K * room_height))
