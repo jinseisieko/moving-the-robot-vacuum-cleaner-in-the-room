@@ -23,42 +23,6 @@ def update_robot_position_jit(x, y, alpha, kL, kR, dt, D, K, max_w):
     return new_x, new_y, new_alpha
 
 
-def find_nearest_intersection(angle, start_x, start_y, segments):
-    ray_end = np.array(
-        [math.cos(angle) * 10e7, math.sin(angle) * 10e7], dtype=np.float64
-    )
-    ray_segment = np.array([[start_x, start_y], ray_end], dtype=np.float64)
-    segments_copy = segments.copy()
-    segment_start_points = segments_copy[:, 0]
-    segment_end_points = segments_copy[:, 1]
-    direction_segment = segment_end_points - segment_start_points
-    direction_ray = ray_segment[1] - ray_segment[0]
-    matrix = np.zeros((len(segments_copy), 2, 2))
-    matrix[:, 0, 0] = direction_segment[:, 0]
-    matrix[:, 1, 0] = direction_segment[:, 1]
-    matrix[:, 0, 1] = direction_ray[0]
-    matrix[:, 1, 1] = direction_ray[1]
-    determinant = np.linalg.det(matrix)
-    non_zero_determinant = ~np.isclose(determinant, 0)
-    t = np.cross(ray_segment[0] - segment_start_points, direction_ray) / determinant
-    u = np.cross(ray_segment[0] - segment_start_points, direction_segment) / determinant
-    is_t_in_range = (0 <= t) & (t <= 1)
-    is_u_in_range = (0 <= u) & (u <= 1)
-    intersection_points = segment_start_points + t[:, np.newaxis] * direction_segment
-    if (
-        len(intersection_points[is_t_in_range & is_u_in_range & non_zero_determinant])
-        == 0
-    ):
-        return None
-    valid_intersections = intersection_points[
-        is_t_in_range & is_u_in_range & non_zero_determinant
-    ].copy()
-    distances = np.linalg.norm(
-        valid_intersections - np.array([start_x, start_y]), axis=1
-    )
-    return valid_intersections[np.argmin(distances)]
-
-
 @nb.njit
 def find_nearest_intersection_jit(angle, start_x, start_y, segments):
     ray_end_x = math.cos(angle) * 10e7
@@ -98,30 +62,14 @@ def find_nearest_intersection_jit(angle, start_x, start_y, segments):
     return nearest_intersection
 
 
-def check_area_points(point, warning_points, radius, cell_size):
-    row = int(point[0] // cell_size)
-    col = int(point[1] // cell_size)
-    warning_points_copy = warning_points.copy()
-    warning_points_copy[row, col, :, 0:2] -= point
-    warning_points_copy[row, col, :, 0:2] **= 2
-    warning_points_copy[row, col, :, 0] = np.sqrt(
-        warning_points_copy[row, col, :, 0] + warning_points_copy[row, col, :, 1]
-    )
-    is_in_area = any(
-        (warning_points_copy[row, col, :, 0] < radius)
-        & (warning_points_copy[row, col, :, 2] > 0.0)
-    )
-    return is_in_area
-
-
 @nb.njit
-def check_area_points_jit(point, warning_points, radius, cell_size):
+def check_red_points_jit(point, red_points, radius, cell_size):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
     is_in_area = False
     for k in [-1, 0, 1]:
         for j in [-1, 0, 1]:
-            warning_points_copy = warning_points[
+            warning_points_copy = red_points[
                 max(0, row + k), max(0, col + j), :, :
             ].copy()
             warning_points_copy[:, 0] -= point[0]
@@ -161,7 +109,7 @@ def count_intersections_jit(start_x, start_y, end_x, end_y, segments):
 
 
 @nb.njit
-def check_cleared_point_jit(x, y, yellow_points, radius):
+def closest_yellow_point_jit(x, y, yellow_points, radius):
     closest_point = None
     min_distance_squared = float("inf")
     for i in range(yellow_points.shape[0]):
@@ -255,6 +203,7 @@ def initialize_yellow_points_jit(segment, yellow_points, radius, non_initialized
 
     return initialized_points
 
+
 def update_priority_yellow_points(x, y, yellow_points, radius):
     for i in range(yellow_points.shape[0]):
         for j in range(yellow_points.shape[1]):
@@ -266,24 +215,24 @@ def update_priority_yellow_points(x, y, yellow_points, radius):
                 distance_squared = dx * dx + dy * dy
                 if distance_squared <= radius * radius:
                     yellow_points[i][j][2] += 0.1
+
+
 @nb.njit
 def closest_red_point_angle(point, red_points, cell_size, radius):
     row = int(point[0] // cell_size)
     col = int(point[1] // cell_size)
     closest_point = None
-    distance = float('inf')
+    distance = float("inf")
     for k in [-1, 0, 1]:
         for j in [-1, 0, 1]:
-            warning_points_copy = red_points[
-                                  max(0, row + k), max(0, col + j), :, :
-                                  ]
+            warning_points_copy = red_points[max(0, row + k), max(0, col + j), :, :]
             valid_points = warning_points_copy[warning_points_copy[:, 2] > 0]
 
             if valid_points.shape[0] == 0:
                 continue
             dx = valid_points[:, 0] - point[0]
             dy = valid_points[:, 1] - point[1]
-            distances_squared = dx ** 2 + dy ** 2
+            distances_squared = dx**2 + dy**2
             min_index = np.argmin(distances_squared)
             closest_candidate = valid_points[min_index]
             closest_distance = np.sqrt(distances_squared[min_index])
@@ -295,35 +244,43 @@ def closest_red_point_angle(point, red_points, cell_size, radius):
         return None
     if distance > radius:
         return None
-    angle = np.arctan2(closest_point[1] - point[1], closest_point[0] - point[0]) + math.pi
+    angle = (
+        np.arctan2(closest_point[1] - point[1], closest_point[0] - point[0]) + math.pi
+    )
     return angle
 
 
 @nb.njit
-def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, delta_a):
-    max_points = 10000  # Set a maximum number of points to avoid dynamic resizing
-    points = np.empty((max_points, 2))  # Preallocate space for points
-    count = 0  # Counter for the number of points
-    k = random.randint(0, 1) * 2 - 1
-
+def create_trajectory(
+    x1, y1, x2, y2, red_points, radius, cell_size, delta_s, delta_a, k=None
+):
+    max_points = 10000
+    points = np.empty((max_points, 2))
+    count = 0
+    k = random.randint(0, 1) * 2 - 1 if k is None else k
 
     while x1 != x2 and y1 != y2:
         p = min(delta_s, ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5)
         angle = math.atan2(y2 - y1, x2 - x1)
         next_x = x1 + p * math.cos(angle)
-        next_y = y1 + p * math.sin(angle)  # Corrected to use sin for y-coordinate
+        next_y = y1 + p * math.sin(angle)
         flag = True
         count_trying = 0
-        while check_area_points_jit(np.array([next_x, next_y]), red_points, radius, cell_size) or flag:
+        while (
+            check_red_points_jit(
+                np.array([next_x, next_y]), red_points, radius, cell_size
+            )
+            or flag
+        ):
             count_trying += 1
             if count_trying > 361:
                 return None
             next_x = x1 + p * math.cos(angle)
-            next_y = y1 + p * math.sin(angle)  # Corrected to use sin for y-coordinate
-            angle += k*delta_a
+            next_y = y1 + p * math.sin(angle)
+            angle += k * delta_a
             flag = False
 
-            for i in range(max(0, count - 10), count - 1):
+            for i in range(max(0, count - 30), count - 1):
                 A = points[i]
                 B = points[i + 1]
                 AB = B - A
@@ -353,12 +310,12 @@ def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, de
                 flag = False
         if count > max_points:
             return None
-        # Store the new point
+
         if count_trying < 1:
             count -= 1
-            dx = points[count-1, 0] - next_x
-            dy = points[count-1, 1] - next_y
-            if dx**2+dy**2 > (delta_s**2)*5:
+            dx = points[count - 1, 0] - next_x
+            dy = points[count - 1, 1] - next_y
+            if dx**2 + dy**2 > (delta_s**2) * 5:
                 count += 1
         points[count, 0] = next_x
         points[count, 1] = next_y
@@ -369,10 +326,10 @@ def create_trajectory(x1, y1, x2, y2, red_points, radius, cell_size, delta_s, de
 
     return points[:count]
 
+
 @nb.njit
 def calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points):
     min_distance = float("inf")
-    priority = -1
     point = None
     for i in range(yellow_points.shape[0]):
         for j in range(yellow_points.shape[1]):
@@ -385,5 +342,4 @@ def calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points):
                 if distance_squared < min_distance:
                     point = yellow_points[i][j][:2]
                     min_distance = distance_squared
-                    priority = yellow_points[i][j][2]
     return point
