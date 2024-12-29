@@ -212,11 +212,12 @@ def simulation(delta_time):
             ) is not None:
                 add_point_to_yellow_points(yellow_point)
     random.shuffle(lidar_rays)
-    for lidar_segment in lidar_rays[:5]:
-        for initialized_yellow_point in initialize_yellow_points_jit(
-            lidar_segment, yellow_points, robot_radius / 2, non_initialized_ids
-        ):
-            add_point_to_initialized_yellow_points(initialized_yellow_point)
+    if len(non_initialized_ids) != 0:
+        for lidar_segment in lidar_rays[:5]:
+            for initialized_yellow_point in initialize_yellow_points_jit(
+                lidar_segment, yellow_points, robot_radius / 2, non_initialized_ids
+            ):
+                add_point_to_initialized_yellow_points(initialized_yellow_point)
     point = calculate_yellow_point_closest_jit(robot_x, robot_y, yellow_points)
     if point is None:
         return
